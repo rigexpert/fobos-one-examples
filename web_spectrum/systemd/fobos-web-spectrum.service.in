@@ -1,0 +1,19 @@
+[Unit]
+Description=FobosOne Web Spectrum Analyzer
+After=network.target
+
+[Service]
+Type=simple
+User=@INSTALL_USER@
+WorkingDirectory=@CMAKE_INSTALL_PREFIX@
+Environment=FOBOS_PORT=8080
+ExecStart=@CMAKE_INSTALL_PREFIX@/launch.sh
+# Restart=always so a backend switch is just "write backend.conf + exit" — systemd re-runs
+# the launcher, which starts whichever backend is now selected.
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

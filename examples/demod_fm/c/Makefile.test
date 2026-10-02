@@ -1,0 +1,23 @@
+CC     = gcc
+CFLAGS = -Wall -Wextra -O2 -g -pthread -march=native
+
+SRC = ringbufer.c test_ringbuffer.c
+BIN = test_ringbuffer
+
+all: $(BIN)
+
+$(BIN): $(SRC) ringbuffer.h
+	$(CC) $(CFLAGS) -o $@ $(SRC)
+
+run: $(BIN)
+	./$(BIN)
+
+# Re-run with ThreadSanitizer to catch data races
+tsan: $(SRC) ringbuffer.h
+	$(CC) $(CFLAGS) -fsanitize=thread -o $(BIN)_tsan $(SRC)
+	./$(BIN)_tsan
+
+clean:
+	rm -f $(BIN) $(BIN)_tsan
+
+.PHONY: all run tsan clean

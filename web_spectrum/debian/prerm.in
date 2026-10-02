@@ -1,0 +1,14 @@
+#!/bin/sh
+# Pre-remove: stop and disable the service before its files go away.
+set -e
+
+case "$1" in
+  remove|deconfigure)
+    if [ -d /run/systemd/system ]; then
+      systemctl stop fobos-web-spectrum.service || true
+      systemctl disable fobos-web-spectrum.service || true
+    fi
+    ;;
+esac
+
+exit 0

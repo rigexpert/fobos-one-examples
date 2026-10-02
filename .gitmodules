@@ -1,0 +1,3 @@
+[submodule "libfobos-sdr-agile"]
+	path = libfobos-sdr-agile
+	url = https://github.com/rigexpert/libfobos-sdr-agile
