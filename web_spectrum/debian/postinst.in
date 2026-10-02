@@ -1,0 +1,35 @@
+#!/bin/sh
+# Post-install: seed defaults, make the tree writable by the service user, and
+# enable + (re)start the systemd service.
+set -e
+
+PREFIX="@CMAKE_INSTALL_PREFIX@"
+SVCUSER="@INSTALL_USER@"
+
+case "$1" in
+  configure)
+    # Default backend selection (never clobber an existing choice).
+    if [ ! -f "$PREFIX/backend.conf" ]; then
+      echo cpp > "$PREFIX/backend.conf"
+    fi
+
+    # The service runs as $SVCUSER and writes backend.conf, state.json and the
+    # calibration output under $PREFIX.
+    if id "$SVCUSER" >/dev/null 2>&1; then
+      chown -R "$SVCUSER" "$PREFIX" || true
+    fi
+
+    # libfobos_sdr is not a packaged dependency; warn if it is missing.
+    if ! ldconfig -p 2>/dev/null | grep -q libfobos_sdr && [ ! -e /usr/local/lib/libfobos_sdr.so ]; then
+      echo "fobos-web-spectrum: warning — libfobos_sdr.so not found; install libfobos-sdr first." >&2
+    fi
+
+    if [ -d /run/systemd/system ]; then
+      systemctl daemon-reload || true
+      systemctl enable fobos-web-spectrum.service || true
+      systemctl restart fobos-web-spectrum.service || true
+    fi
+    ;;
+esac
+
+exit 0

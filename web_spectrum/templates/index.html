@@ -1,0 +1,1360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FobosOne Spectrum Analyzer</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0e0e12; color: #cdd; font-family: 'Courier New', monospace; font-size: 13px; }
+
+header { background: #1a1a24; padding: 8px 16px; border-bottom: 1px solid #2a3a4a;
+         display: flex; align-items: center; gap: 16px; }
+header h1 { color: #4ef; font-size: 15px; letter-spacing: 1px; }
+#status { font-size: 11px; padding: 3px 8px; border-radius: 3px; background: #222; }
+#status.ok  { background: #0a3020; color: #4e8; }
+#status.err { background: #300a0a; color: #e44; }
+
+.layout { display: flex; height: calc(100vh - 42px); }
+
+/* ── Controls ── */
+aside { width: 240px; min-width: 220px; background: #12121c; border-right: 1px solid #223;
+        overflow-y: auto; padding: 12px 10px; display: flex; flex-direction: column; gap: 10px; }
+
+.section { background: #1a1a28; border-radius: 6px; padding: 10px; }
+.section h2 { color: #8ae; font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+              margin-bottom: 8px; border-bottom: 1px solid #2a3a5a; padding-bottom: 4px; }
+
+label { display: block; color: #9ab; margin-bottom: 2px; font-size: 11px; }
+input[type=number], input[type=range], select {
+  width: 100%; background: #0e0e1a; border: 1px solid #334; color: #cde;
+  padding: 4px 6px; border-radius: 4px; font-size: 12px; }
+input[type=range] { padding: 0; cursor: pointer; }
+
+.row { display: flex; gap: 6px; align-items: flex-end; }
+.row > * { flex: 1; }
+
+.val-label { display: flex; justify-content: space-between; }
+.val-label span { color: #7cf; font-weight: bold; }
+
+button { width: 100%; padding: 7px; border: none; border-radius: 5px; cursor: pointer;
+         font-family: inherit; font-size: 13px; font-weight: bold; letter-spacing: 1px; }
+.btn-detached  { background: #1a3a6a !important; color: #8cf !important; }
+.btn-attached  { background: #3a2a0a !important; color: #fc8 !important; }
+.btn-start     { background: #1a6a30 !important; color: #4ef !important; }
+.btn-stop      { background: #5a1a1a !important; color: #f88 !important; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+#mode-tabs { display: flex; gap: 4px; margin-bottom: 4px; }
+.tab { flex:1; padding: 4px; border-radius: 4px; background:#1e1e30; border:1px solid #334;
+       cursor:pointer; text-align:center; color:#8ab; font-size:11px; }
+.tab.active { background:#224; border-color:#4af; color:#4ef; }
+
+#scan-section { display: none; }
+#fft-section  { display: block; }
+#cal-section  { display: none; }
+#cfg-section  { display: none; }
+#cfg-section label.opt { display:flex; align-items:center; gap:6px; margin:5px 0; cursor:pointer; }
+#cfg-section .sub { font-size:10px; color:#789; margin:2px 0 6px; }
+#cfg-running { color:#4ef; font-weight:bold; }
+#cal-section .sub { font-size:10px; color:#789; margin:2px 0 4px; }
+#cal-section input[type=text], #cal-section input[type=number], #cal-section select {
+  width:100%; box-sizing:border-box; }
+#cal-section .row2 { display:flex; gap:6px; }
+#cal-section .row2 > div { flex:1; }
+#cal-progress-bar { height:8px; background:#123; border-radius:4px; overflow:hidden; margin:4px 0; }
+#cal-progress-fill { height:100%; width:0%; background:#2a7; transition:width .3s; }
+#cal-log { font-size:10px; color:#8ab; max-height:64px; overflow:auto; white-space:pre-wrap;
+  background:#0c0c18; border-radius:4px; padding:3px 5px; margin-top:4px; }
+.mini-ok { color:#4e8; } .mini-bad { color:#f77; }
+
+.info-row { font-size: 11px; color: #7a9; display:flex; justify-content:space-between; }
+.info-row span { color: #cf8; }
+
+/* ── Displays ── */
+main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+#spectrum-wrap { flex: 0 0 220px; position: relative; padding: 4px 0; }
+#waterfall-wrap { flex: 1; position: relative; overflow: hidden; }
+
+canvas { display: block; width: 100%; height: 100%; }
+
+.axis-label { position: absolute; font-size: 10px; color: #456; pointer-events: none; }
+.ylabel { writing-mode: vertical-rl; transform: rotate(180deg); left: 2px; top: 50%;
+          transform: rotate(180deg) translateY(50%); }
+
+.colorbar { position: absolute; right: 4px; top: 10px; bottom: 10px; width: 12px; }
+.colorbar canvas { width: 12px; height: 100%; }
+</style>
+</head>
+<body>
+<header>
+  <h1>&#x25A3; FOBOSONE SPECTRUM</h1>
+  <span id="status">disconnected</span>
+  <span id="info-freq" style="color:#cf8;font-size:11px;margin-left:auto;"></span>
+</header>
+
+<div class="layout">
+<aside>
+
+  <!-- Mode -->
+  <div class="section">
+    <h2>Mode</h2>
+    <div id="mode-tabs">
+      <div class="tab active" id="tab-fft"  onclick="setMode('fft')">FFT</div>
+      <div class="tab"        id="tab-scan" onclick="setMode('scan')">SCAN</div>
+      <div class="tab"        id="tab-cal"  onclick="setMode('cal')">CAL</div>
+      <div class="tab"        id="tab-cfg"  onclick="setMode('cfg')">CFG</div>
+    </div>
+  </div>
+
+  <!-- Sample rate (shared: FFT span / scan per-step bandwidth) -->
+  <div class="section acq-only">
+    <h2>Sample Rate</h2>
+    <label>Msps (FFT span / scan step BW)</label>
+    <select id="rate-sel" onchange="onRateChange()">
+      <option value="8000000">8.0</option>
+      <option value="10000000" selected>10.0</option>
+      <option value="12500000">12.5</option>
+      <option value="16000000">16.0</option>
+      <option value="20000000">20.0</option>
+      <option value="25000000">25.0</option>
+      <option value="32000000">32.0</option>
+      <option value="40000000">40.0</option>
+      <option value="50000000">50.0</option>
+      <option value="58000000">58.0</option>
+      <option value="64000000">64.0</option>
+    </select>
+  </div>
+
+  <!-- FFT section (hidden in scan mode) -->
+  <div class="section" id="fft-section">
+    <h2>Frequency</h2>
+    <label>Center (MHz)</label>
+    <input type="number" id="freq-mhz" value="433.92" step="0.01" min="50" max="6000"
+           onchange="sendParams({freq: +this.value * 1e6})">
+    <br>
+    <label style="margin-top:6px">FFT Overlap (%)</label>
+    <div class="val-label"><label></label><span id="overlap-val">0</span></div>
+    <input type="range" id="overlap" min="0" max="75" step="5" value="0"
+           title="Window overlap. More overlap = more FFTs from the same samples, so finer waterfall time resolution."
+           oninput="document.getElementById('overlap-val').textContent=this.value"
+           onchange="sendParams({overlap:+this.value})">
+  </div>
+
+  <!-- Scan section -->
+  <div class="section" id="scan-section">
+    <h2>Scan Range</h2>
+    <label>From (MHz)</label>
+    <input type="number" id="scan-from" value="430" step="0.5">
+    <label style="margin-top:6px">To (MHz)</label>
+    <input type="number" id="scan-to" value="440" step="0.5">
+    <label style="margin-top:6px">Steps (auto = span / 0.8·rate)</label>
+    <input type="number" id="scan-steps" value="10" min="2" max="512" readonly
+           title="Computed from range and sample rate for contiguous coverage"
+           style="opacity:0.65; cursor:not-allowed">
+    <br>
+    <label style="margin-top:6px">Step Overlap (%)</label>
+    <div class="val-label"><label></label><span id="scan-overlap-val">40</span></div>
+    <input type="range" id="scan-overlap" min="0" max="85" step="5" value="40"
+           oninput="document.getElementById('scan-overlap-val').textContent=this.value">
+  </div>
+
+  <!-- Configure section -->
+  <div class="section" id="cfg-section">
+    <h2>Backend</h2>
+    <div class="sub">Currently running: <span id="cfg-running">—</span></div>
+    <label class="opt"><input type="radio" name="backend" value="cpp" style="width:auto"> C++ (spectrumd — fast, native)</label>
+    <label class="opt"><input type="radio" name="backend" value="python" style="width:auto"> Python (app — Flask/SocketIO)</label>
+    <button class="btn-start" style="margin-top:6px" onclick="applyBackend()">APPLY &amp; RESTART</button>
+    <div class="sub" id="cfg-status" style="margin-top:6px">—</div>
+    <div class="sub">Switching restarts the backend in place (same service); the page reloads
+      automatically. The C++ backend is recommended for performance.</div>
+  </div>
+
+  <!-- Calibration section -->
+  <div class="section" id="cal-section">
+    <h2>Calibration</h2>
+
+    <label>Frequency range (MHz)</label>
+    <div class="row2">
+      <div><input type="number" id="cal-from" value="200" step="1" min="1" title="Aaronia sig-gen floor ≈200 MHz"></div>
+      <div><input type="number" id="cal-to"   value="6000" step="1" max="6000"></div>
+    </div>
+    <label style="margin-top:6px">Step (kHz)</label>
+    <input type="number" id="cal-step" value="100" min="1" step="1">
+
+    <h2 style="margin-top:10px">Signal generator</h2>
+    <select id="cal-gen"><option value="aaronia">Aaronia RTSA (HTTP)</option></select>
+    <div class="row2" style="margin-top:4px">
+      <div><label>IP</label><input type="text" id="cal-gen-ip" value="10.10.1.74"></div>
+      <div><label>Port</label><input type="number" id="cal-gen-port" value="54664"></div>
+    </div>
+    <button style="margin-top:5px;background:#243;color:#8fc" onclick="calTestAaronia()">Test connection</button>
+    <div class="sub" id="cal-gen-status">not tested</div>
+
+    <label style="margin-top:6px">TX power(s) dBm — comma-sep for linearity</label>
+    <input type="text" id="cal-powers" value="-40" title="e.g. -40  or  -50,-40,-30">
+
+    <h2 style="margin-top:10px">Gain coverage</h2>
+    <select id="cal-gain-mode" onchange="calGainModeChange()">
+      <option value="factored" selected>Factored (fine freq @ ref gain + coarse gain grid)</option>
+      <option value="single">Single gain (ref only, fastest)</option>
+      <option value="full">Full grid (every gain × every freq, slow)</option>
+    </select>
+    <div class="row2" style="margin-top:4px">
+      <div><label>Ref LNA</label><input type="number" id="cal-ref-lna" value="1" min="0" max="3"></div>
+      <div><label>Ref VGA</label><input type="number" id="cal-ref-vga" value="8" min="0" max="31"></div>
+    </div>
+    <label style="margin-top:4px" id="cal-coarse-lbl">Gain-grid coarse step (MHz)</label>
+    <input type="number" id="cal-coarse" value="200" min="10" step="10">
+
+    <h2 style="margin-top:10px">RF cable loss</h2>
+    <select id="cal-cable" onchange="calCableChange()">
+      <option value="cbl-1m-smsm" selected>Mini-Circuits CBL-1M-SMSM+</option>
+      <option value="custom">Custom (Touchstone .s1p/.s2p)</option>
+      <option value="none">None (0 dB)</option>
+    </select>
+    <div id="cal-touchstone-row" style="display:none;margin-top:4px">
+      <input type="file" id="cal-touchstone" accept=".s1p,.s2p,.touchstone" style="font-size:11px"
+             onchange="calLoadTouchstone()">
+      <div class="sub" id="cal-touchstone-status">no file — uses S21 insertion loss</div>
+    </div>
+
+    <label style="margin-top:8px">Exclude ranges (MHz, e.g. 2200-2600, 5150-5350)</label>
+    <input type="text" id="cal-exclude" value="2200-2600" title="Skipped (interpolated). This unit's RX gap ≈2200–2600.">
+
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;color:#8ab;font-size:11px">Advanced (defaults are optimal)</summary>
+      <label style="margin-top:4px">Fobos sample rate (Msps)</label>
+      <input type="number" id="cal-rate" value="10" min="8" max="64" step="1">
+      <label style="margin-top:4px">FFT size</label>
+      <select id="cal-fft"><option>1024</option><option>2048</option><option>4096</option>
+        <option selected>8192</option></select>
+      <label style="margin-top:4px">Averages / point</label>
+      <input type="number" id="cal-accum" value="4" min="1" max="64">
+      <label style="margin-top:4px">Settle per point (ms)</label>
+      <input type="number" id="cal-settle" value="250" min="0" step="10">
+      <label style="margin-top:4px">Tone offset (kHz)</label>
+      <input type="number" id="cal-tone" value="200" min="10" step="10">
+      <label style="margin-top:6px"><input type="checkbox" id="cal-clean" checked style="width:auto"> interference cleanup (postprocess)</label>
+    </details>
+
+    <button class="btn-start" style="margin-top:8px" id="cal-start-btn" onclick="calStart()">START CALIBRATION</button>
+    <button class="btn-stop"  style="margin-top:4px;display:none" id="cal-abort-btn" onclick="calAbort()">ABORT</button>
+
+    <div id="cal-progress-bar"><div id="cal-progress-fill"></div></div>
+    <div class="info-row"><label>Progress</label><span id="cal-pct">—</span></div>
+    <div class="info-row"><label>Freq</label><span id="cal-curfreq">—</span></div>
+    <div class="info-row"><label>ETA</label><span id="cal-eta">—</span></div>
+    <div id="cal-log"></div>
+  </div>
+
+  <!-- Gain -->
+  <div class="section acq-only">
+    <h2>Gain</h2>
+    <div class="val-label"><label>LNA (0–3)</label><span id="lna-val">2</span></div>
+    <input type="range" id="lna" min="0" max="3" step="1" value="2"
+           oninput="document.getElementById('lna-val').textContent=this.value; sendParams({lna:+this.value})">
+    <div class="val-label" style="margin-top:6px"><label>VGA (0–31)</label><span id="vga-val">8</span></div>
+    <input type="range" id="vga" min="0" max="31" step="1" value="8"
+           oninput="document.getElementById('vga-val').textContent=this.value; sendParams({vga:+this.value})">
+  </div>
+
+  <!-- FFT size -->
+  <div class="section acq-only">
+    <h2>Display</h2>
+    <label>FFT Size</label>
+    <select id="fft-size" onchange="onFftChange()">
+      <option value="512">512</option>
+      <option value="1024">1024</option>
+      <option value="2048">2048</option>
+      <option value="4096" selected>4096</option>
+      <option value="8192">8192</option>
+    </select>
+    <label style="margin-top:6px">Avg frames</label>
+    <input type="number" id="accum-n" value="4" min="1" max="64"
+           title="FFTs averaged into each displayed frame. Higher = smoother, slower."
+           onchange="sendParams({accum_n: Math.max(1, parseInt(this.value) || 1)}); persistUI();">
+
+    <div style="margin-top:8px">
+      <label>Trace (Max Hold)</label>
+      <button id="btn-maxhold" onclick="toggleMaxHold()"
+              style="background:#26304a;color:#8cf;">MAX HOLD: OFF</button>
+      <button onclick="resetMaxHold()"
+              style="margin-top:4px;background:#2a2a3a;color:#aab;">RESET TRACE</button>
+    </div>
+
+    <div style="margin-top:8px">
+      <button id="btn-autorange" onclick="toggleAutoRange()"
+              style="background:#0a3020;color:#4e8;margin-bottom:6px;">AUTO RANGE: ON</button>
+      <label id="ref-db-label">Ref Level (dBFS)</label>
+      <input type="number" id="ref-db" value="-20" step="5" disabled>
+      <!-- Range is a span between two levels, so plain dB is correct here. -->
+      <label style="margin-top:6px">Range (dB)</label>
+      <input type="number" id="range-db" value="80" step="5" min="10" max="200" disabled>
+    </div>
+
+    <div style="margin-top:8px">
+      <button id="btn-dcreject" onclick="toggleDcReject()"
+              style="background:#0a3020;color:#4e8;">DC REJECT: ON</button>
+      <label style="margin-top:6px">DC notch width (kHz)</label>
+      <input type="number" id="dc-width" value="100" min="0" max="2000" step="10"
+             onchange="sendDcWidth()">
+    </div>
+
+    <div style="margin-top:8px">
+      <button id="btn-grid" onclick="toggleGrid()"
+              style="background:#0a3020;color:#4e8;">GRID: ON</button>
+    </div>
+
+    <div style="margin-top:8px">
+      <button id="btn-cal" onclick="toggleCal()" disabled
+              style="background:#26304a;color:#8cf;" title="needs fobos_calibration.json">CAL dBm: OFF</button>
+    </div>
+
+    <div style="margin-top:8px">
+      <label>Waterfall rows</label>
+      <input type="number" id="wf-rows" value="200" min="50" max="1000">
+    </div>
+  </div>
+
+  <!-- Info -->
+  <div class="section acq-only">
+    <h2>Info</h2>
+    <div class="info-row">Frames/s: <span id="fps">0</span></div>
+    <div class="info-row">Peak: <span id="peak-val">—</span></div>
+    <div class="info-row">Peak@: <span id="peak-freq">—</span></div>
+    <div class="info-row" title="coherent single-bin power meter: resolution-independent, no scalloping (FFT mode)">
+      Carrier (TD): <span id="td-power" style="color:#4e8;">—</span></div>
+    <div class="info-row">Carrier@: <span id="td-freq">—</span></div>
+  </div>
+
+  <!-- Buttons -->
+  <div>
+    <button id="btn-dev"      onclick="toggleDev()">&#x2B24; ATTACH</button>
+    <button id="btn-startstop" onclick="toggleRx()" style="margin-top:6px" disabled>&#x25B6; START</button>
+  </div>
+
+</aside>
+
+<main>
+  <div id="spectrum-wrap">
+    <canvas id="spectrum-canvas"></canvas>
+  </div>
+  <div id="waterfall-wrap">
+    <canvas id="waterfall-canvas"></canvas>
+  </div>
+</main>
+</div>
+
+<script src="/static/ws-shim.js"></script>
+<script>
+// ── Globals ──────────────────────────────────────────────────────────────
+const socket = io();
+let currentMode = 'fft';
+let lastFreqs = null, lastPower = null;
+let running = false, attached = false;
+// Ignore (drop, un-decoded) the spectrum stream until this client has attached — a viewer
+// tab that never pushed Attach does no work and draws nothing.
+socket.setAcceptBinary(() => attached);
+
+// Max hold: element-wise peak trace over frames (works in FFT and SCAN mode).
+// Auto-resets when the frequency axis changes (center/rate/scan-range change).
+let maxHoldOn = false;
+let maxPower  = null;
+let maxAxisKey = null;
+let autoRange = true;          // dynamically scale ref/range to the data (spectrum + waterfall)
+let gridOn    = true;          // grid lines on spectrum + waterfall (axis labels stay)
+let calData   = null;          // absolute-power calibration from /api/calibration
+let calOn     = false;         // apply calibration -> display in dBm instead of dBFS
+let clipping  = false;         // raw input near/over ADC clip (calibration invalid here)
+
+// Waterfall
+let wfRows   = 200;
+let wfData   = [];   // Float32Array rows, newest first
+let wfTimes  = [];   // Date.now() per row
+let wfFreqs  = null;
+let wfCenter = null; // last known center freq for flush detection
+
+// Waterfall mouse
+let wfMouseX = -1, wfMouseY = -1;
+// Spectrum mouse
+let specMouseX = -1, specMouseY = -1;
+
+// FPS
+let fpsCount = 0, fpsLast = Date.now();
+
+// ── Canvas setup ─────────────────────────────────────────────────────────
+const specCanvas = document.getElementById('spectrum-canvas');
+const wfCanvas   = document.getElementById('waterfall-canvas');
+const specCtx    = specCanvas.getContext('2d');
+const wfCtx      = wfCanvas.getContext('2d');
+
+function resizeCanvases() {
+  const sw = document.getElementById('spectrum-wrap');
+  const ww = document.getElementById('waterfall-wrap');
+  specCanvas.width  = sw.clientWidth;  specCanvas.height = sw.clientHeight;
+  wfCanvas.width    = ww.clientWidth;  wfCanvas.height   = ww.clientHeight;
+  redraw();
+}
+window.addEventListener('resize', resizeCanvases);
+setTimeout(resizeCanvases, 100);
+
+// Decouple rendering from frame arrival. Incoming frames only mark the canvas dirty;
+// a single requestAnimationFrame loop does the actual (expensive) drawing at most once
+// per animation frame, always for the LATEST data. Without this, a slow draw at large
+// FFT sizes blocked the event loop so incoming frames — and even control fetches
+// (/api/start on FFT-size change) — backed up, making the UI feel frozen.
+let _dirty = false;
+function requestRedraw() { _dirty = true; }
+function _renderLoop() {
+  if (_dirty) {
+    _dirty = false;
+    if (lastFreqs && lastPower) { drawSpectrum(lastFreqs, lastPower); drawWaterfall(); }
+  }
+  requestAnimationFrame(_renderLoop);
+}
+requestAnimationFrame(_renderLoop);
+
+// Waterfall mouse tracking
+wfCanvas.addEventListener('mousemove', e => {
+  const r = wfCanvas.getBoundingClientRect();
+  wfMouseX = (e.clientX - r.left) * (wfCanvas.width  / r.width);
+  wfMouseY = (e.clientY - r.top)  * (wfCanvas.height / r.height);
+  requestRedraw();
+});
+wfCanvas.addEventListener('mouseleave', () => { wfMouseX = -1; wfMouseY = -1; requestRedraw(); });
+
+// Spectrum mouse tracking
+specCanvas.addEventListener('mousemove', e => {
+  const r = specCanvas.getBoundingClientRect();
+  specMouseX = (e.clientX - r.left) * (specCanvas.width  / r.width);
+  specMouseY = (e.clientY - r.top)  * (specCanvas.height / r.height);
+  requestRedraw();
+});
+specCanvas.addEventListener('mouseleave', () => { specMouseX = -1; specMouseY = -1; requestRedraw(); });
+
+// ── Frequency-axis zoom (mouse wheel) ───────────────────────────────────────
+// Display zoom into the received data (no re-tuning): a shared [viewFMin,viewFMax]
+// window drives BOTH the spectrum and the waterfall, so they stay aligned. Wheel up
+// zooms in toward the cursor frequency; wheel down zooms out; double-click resets.
+let viewFMin = null, viewFMax = null;   // null => full data span
+let zoomRangeKey = null;                 // frequency span the current zoom belongs to
+function getView(dataMin, dataMax) {
+  let a = viewFMin == null ? dataMin : Math.max(dataMin, viewFMin);
+  let b = viewFMax == null ? dataMax : Math.min(dataMax, viewFMax);
+  if (!(b > a)) { a = dataMin; b = dataMax; }
+  return { a, b };
+}
+function freqAtCanvasX(mouseX, canvasW, pad) {
+  const pw = canvasW - pad.l - pad.r;
+  const dmin = lastFreqs[0], dmax = lastFreqs[lastFreqs.length - 1];
+  const { a, b } = getView(dmin, dmax);
+  let frac = (mouseX - pad.l) / pw;
+  frac = Math.max(0, Math.min(1, frac));
+  return a + (b - a) * frac;
+}
+function zoomAt(freqAtCursor, factor) {
+  if (!lastFreqs) return;
+  const dmin = lastFreqs[0], dmax = lastFreqs[lastFreqs.length - 1];
+  const { a: a0, b: b0 } = getView(dmin, dmax);
+  const minSpan = (dmax - dmin) / 5000;   // don't zoom past ~5000x
+  let span = Math.max(minSpan, Math.min(dmax - dmin, (b0 - a0) * factor));
+  if (span >= dmax - dmin) { viewFMin = viewFMax = null; requestRedraw(); return; }
+  const rel = (freqAtCursor - a0) / (b0 - a0);
+  let a = freqAtCursor - rel * span;
+  let b = a + span;
+  if (a < dmin) { a = dmin; b = a + span; }
+  if (b > dmax) { b = dmax; a = b - span; }
+  viewFMin = Math.max(dmin, a); viewFMax = Math.min(dmax, b);
+  requestRedraw();
+}
+function resetZoom() { viewFMin = viewFMax = null; requestRedraw(); }
+function attachZoom(canvas, getPad) {
+  canvas.addEventListener('wheel', e => {
+    if (!lastFreqs) return;
+    e.preventDefault();
+    const r = canvas.getBoundingClientRect();
+    const mx = (e.clientX - r.left) * (canvas.width / r.width);
+    zoomAt(freqAtCanvasX(mx, canvas.width, getPad()), e.deltaY < 0 ? 0.8 : 1.25);
+  }, { passive: false });
+  canvas.addEventListener('dblclick', resetZoom);
+}
+// SPAD/WPAD are defined further down; reference them lazily so this runs before their decl.
+attachZoom(specCanvas, () => SPAD);
+attachZoom(wfCanvas, () => WPAD);
+
+// ── Axis colors (high contrast on black) ───────────────────────────────────
+const AXIS_LABEL = '#9fb3c8';   // readable light blue-gray for tick labels
+const AXIS_GRID  = '#33405a';   // brighter grid lines
+
+// ── Color mapping ────────────────────────────────────────────────────────
+function powerToColor(db, refDb, rangeDb) {
+  let t = (db - (refDb - rangeDb)) / rangeDb;
+  t = Math.max(0, Math.min(1, t));
+  const r = Math.round(255 * Math.min(1, t * 2));
+  const g = Math.round(255 * Math.max(0, Math.min(1, t * 2.5 - 0.5)));
+  const b = Math.round(255 * Math.max(0, 1 - t * 2));
+  return [r, g, b];
+}
+
+// 256-entry RGB colormap LUT. The color depends only on the normalized level t,
+// so precompute it once and index by level in the per-pixel waterfall loop instead
+// of calling powerToColor() ~800k times per frame (the dominant frontend cost).
+const WF_LUT = (() => {
+  const lut = new Uint8Array(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255;
+    lut[i*3]   = Math.round(255 * Math.min(1, t * 2));
+    lut[i*3+1] = Math.round(255 * Math.max(0, Math.min(1, t * 2.5 - 0.5)));
+    lut[i*3+2] = Math.round(255 * Math.max(0, 1 - t * 2));
+  }
+  return lut;
+})();
+
+// ── Nice axis step ────────────────────────────────────────────────────────
+function nicestep(span) {
+  if (span <= 0) return 1;
+  const e = Math.pow(10, Math.floor(Math.log10(span)));
+  if (span / e >= 5) return e;
+  if (span / e >= 2) return e / 2;
+  return e / 5;
+}
+
+// ── Draw spectrum ─────────────────────────────────────────────────────────
+const SPAD = { l: 50, r: 10, t: 10, b: 24 };
+
+function drawSpectrum(freqs, power) {
+  if (!freqs || !power) return;
+  const W = specCanvas.width, H = specCanvas.height;
+  const {ref: refDb, range: rangeDb} = getRefRange();
+  const minDb   = refDb - rangeDb;
+  const { l, r, t, b } = SPAD;
+  const pw = W - l - r, ph = H - t - b;
+  // Uncalibrated the trace is dB relative to ADC full scale, so name it dBFS -- bare "dB"
+  // states a ratio without its reference. With calibration applied it is absolute dBm.
+  const unit = (calOn && calData) ? 'dBm' : 'dBFS';
+
+  specCtx.fillStyle = '#080810';
+  specCtx.fillRect(0, 0, W, H);
+  specCtx.fillStyle = (calOn && calData) ? '#4e8' : AXIS_LABEL;
+  specCtx.font = 'bold 10px monospace';
+  specCtx.fillText(unit, 4, t + 8);
+  if (clipping) {
+    specCtx.fillStyle = '#f44'; specCtx.font = 'bold 13px monospace';
+    const msg = calOn ? '⚠ INPUT CLIPPING — reduce gain (dBm reading invalid)'
+                      : '⚠ INPUT CLIPPING — reduce LNA/VGA';
+    specCtx.fillText(msg, W/2 - 150, t + 14);
+  }
+
+  specCtx.lineWidth = 1;
+  const dbStep = rangeDb > 60 ? 20 : 10;
+  for (let db = Math.ceil(minDb / dbStep) * dbStep; db <= refDb; db += dbStep) {
+    const y = t + ph * (1 - (db - minDb) / rangeDb);
+    if (gridOn) {
+      specCtx.strokeStyle = AXIS_GRID;
+      specCtx.beginPath(); specCtx.moveTo(l, y); specCtx.lineTo(W - r, y); specCtx.stroke();
+    }
+    specCtx.fillStyle = AXIS_LABEL; specCtx.font = '10px monospace';
+    specCtx.fillText(db.toFixed(0), 2, y + 3);
+  }
+  const dataMin = freqs[0], dataMax = freqs[freqs.length - 1];
+  const { a: fMin, b: fMax } = getView(dataMin, dataMax);   // wheel-zoom view window
+  const fSpan = (fMax - fMin) || 1;
+  const zoomed = viewFMin != null || viewFMax != null;
+  const fStep = nicestep(fSpan / 8);
+  for (let f = Math.ceil(fMin / fStep) * fStep; f <= fMax; f += fStep) {
+    const x = l + pw * (f - fMin) / fSpan;
+    if (gridOn) {
+      specCtx.strokeStyle = AXIS_GRID;
+      specCtx.beginPath(); specCtx.moveTo(x, t); specCtx.lineTo(x, H - b); specCtx.stroke();
+    }
+    specCtx.fillStyle = AXIS_LABEL; specCtx.font = '10px monospace';
+    specCtx.fillText((f / 1e6).toFixed(fStep < 1e6 ? 3 : 0), x - 14, H - b + 12);
+  }
+  if (zoomed) {
+    specCtx.fillStyle = '#4ef'; specCtx.font = 'bold 10px monospace';
+    specCtx.fillText('ZOOM ' + ((dataMax - dataMin) / fSpan).toFixed(1) + '×  (dbl-click reset)', l + 4, t + 11);
+  }
+
+  specCtx.save();
+  specCtx.beginPath(); specCtx.rect(l, t, pw, ph); specCtx.clip();   // keep traces inside the plot
+  specCtx.beginPath(); specCtx.strokeStyle = '#4ef'; specCtx.lineWidth = 1;
+  const n = freqs.length;
+  for (let i = 0; i < n; i++) {
+    const x = l + pw * (freqs[i] - fMin) / fSpan;
+    const y = t + ph * (1 - (power[i] - minDb) / rangeDb);
+    i === 0 ? specCtx.moveTo(x, y) : specCtx.lineTo(x, y);
+  }
+  specCtx.stroke();
+  specCtx.lineTo(l + pw, H - b); specCtx.lineTo(l, H - b); specCtx.closePath();
+  specCtx.fillStyle = 'rgba(0,200,255,0.06)'; specCtx.fill();
+
+  // ── Max-hold overlay (bright yellow) ──────────────────────────────────────
+  const showMax = maxHoldOn && maxPower && maxPower.length === n;
+  if (showMax) {
+    specCtx.beginPath(); specCtx.strokeStyle = '#fd4'; specCtx.lineWidth = 1.3;
+    for (let i = 0; i < n; i++) {
+      const x = l + pw * (freqs[i] - fMin) / fSpan;
+      const y = t + ph * (1 - (maxPower[i] - minDb) / rangeDb);
+      i === 0 ? specCtx.moveTo(x, y) : specCtx.lineTo(x, y);
+    }
+    specCtx.stroke();
+    specCtx.fillStyle = '#fd4'; specCtx.font = 'bold 10px monospace';
+    specCtx.fillText('MAX HOLD', W - r - 64, t + 11);
+  }
+
+  // Peak tracks the max-hold trace when active (that is the "signal picture").
+  // Restricted to the visible (zoomed) frequency window.
+  const peakTrace = showMax ? maxPower : power;
+  let peakIdx = -1, peakVal = -Infinity;
+  for (let i = 0; i < n; i++) {
+    if (freqs[i] < fMin || freqs[i] > fMax) continue;
+    if (peakTrace[i] > peakVal) { peakVal = peakTrace[i]; peakIdx = i; }
+  }
+  if (peakIdx < 0) { peakIdx = 0; peakVal = peakTrace[0]; }
+  document.getElementById('peak-val').textContent  = peakVal.toFixed(1) + ' ' + unit;
+  document.getElementById('peak-freq').textContent = (freqs[peakIdx] / 1e6).toFixed(3) + ' MHz';
+  const px = l + pw * (freqs[peakIdx] - fMin) / fSpan;
+  const py = t + ph * (1 - (peakVal - minDb) / rangeDb);
+  specCtx.strokeStyle = '#f84'; specCtx.lineWidth = 1;
+  specCtx.beginPath(); specCtx.moveTo(px, t); specCtx.lineTo(px, H - b); specCtx.stroke();
+  specCtx.fillStyle = '#f84'; specCtx.font = 'bold 10px monospace';
+  const peakLabel = (freqs[peakIdx] / 1e6).toFixed(3) + ' MHz  ' + peakVal.toFixed(1) + ' ' + unit;
+  specCtx.fillText(peakLabel, Math.min(px + 3, W - 130), py - 4);
+  specCtx.restore();   // end plot-rect clip
+
+  // ── Cursor crosshair & tooltip (read level/freq under the mouse) ──────────
+  if (specMouseX >= l && specMouseX <= W - r && specMouseY >= t && specMouseY <= H - b) {
+    const cursDb   = minDb + rangeDb * (1 - (specMouseY - t) / ph);
+    const cursFreq = fMin + fSpan * (specMouseX - l) / pw;
+    // trace level at the cursor frequency (nearest bin; index maps over the full data span)
+    let bin = Math.round((n - 1) * (cursFreq - dataMin) / ((dataMax - dataMin) || 1));
+    bin = Math.max(0, Math.min(n - 1, bin));
+    const traceDb = power[bin];
+
+    specCtx.save();
+    specCtx.strokeStyle = 'rgba(255,255,80,0.7)';
+    specCtx.lineWidth = 1;
+    specCtx.setLineDash([4, 4]);
+    specCtx.beginPath(); specCtx.moveTo(specMouseX, t); specCtx.lineTo(specMouseX, H - b); specCtx.stroke();
+    specCtx.beginPath(); specCtx.moveTo(l, specMouseY); specCtx.lineTo(W - r, specMouseY); specCtx.stroke();
+    specCtx.setLineDash([]);
+
+    // marker dot on the trace at this frequency
+    const ty2 = t + ph * (1 - (traceDb - minDb) / rangeDb);
+    specCtx.fillStyle = '#ff8';
+    specCtx.beginPath(); specCtx.arc(specMouseX, ty2, 3, 0, 2 * Math.PI); specCtx.fill();
+
+    // level label on the left edge at the horizontal line
+    specCtx.font = 'bold 10px monospace';
+    const lvl = cursDb.toFixed(1);
+    const lw  = specCtx.measureText(lvl).width;
+    specCtx.fillStyle = 'rgba(0,0,0,0.8)';
+    specCtx.fillRect(l + 1, specMouseY - 13, lw + 6, 15);
+    specCtx.fillStyle = '#ff8';
+    specCtx.fillText(lvl, l + 4, specMouseY - 2);
+
+    // tooltip with freq + cursor level + trace level
+    const txt = (cursFreq / 1e6).toFixed(4) + ' MHz  ' +
+                cursDb.toFixed(1) + ' dB  (trace ' + traceDb.toFixed(1) + ')';
+    const tw  = specCtx.measureText(txt).width;
+    let tx = specMouseX + 8, tyt = specMouseY - 6;
+    if (tx + tw + 8 > W - r) tx = specMouseX - tw - 12;
+    if (tyt - 14 < t) tyt = specMouseY + 16;
+    specCtx.fillStyle = 'rgba(0,0,0,0.78)';
+    specCtx.fillRect(tx - 3, tyt - 13, tw + 8, 17);
+    specCtx.fillStyle = '#ff8';
+    specCtx.fillText(txt, tx, tyt);
+    specCtx.restore();
+  }
+}
+
+// ── Draw waterfall ─────────────────────────────────────────────────────────
+const WPAD = { l: 52, r: 10, t: 5, b: 24 };
+
+function drawWaterfall() {
+  if (!wfData.length || !wfFreqs) return;
+  const W = wfCanvas.width, H = wfCanvas.height;
+  const { l, r, t, b } = WPAD;
+  const pw = W - l - r, ph = H - t - b;
+  if (pw <= 0 || ph <= 0) return;
+
+  const {ref: refDb, range: rangeDb} = getRefRange();
+  const nRows   = wfData.length;
+  const nBins   = wfData[0].length;
+
+  // Draw waterfall pixels into inner area
+  const img  = wfCtx.createImageData(pw, ph);
+  const pix  = img.data;
+  const minDb = refDb - rangeDb, invRange = 255 / rangeDb;   // LUT index scale
+  const dataMin = wfFreqs[0], dataMax = wfFreqs[wfFreqs.length - 1];
+  const { a: viewMin, b: viewMax } = getView(dataMin, dataMax);   // shared wheel-zoom window
+  const viewSpan = (viewMax - viewMin) || 1, dataSpan = (dataMax - dataMin) || 1;
+  for (let row = 0; row < ph; row++) {
+    const di = Math.min(Math.floor(row * nRows / ph), nRows - 1);
+    const rd = wfData[di];
+    const rn = rd ? rd.length : 0;
+    for (let col = 0; col < pw; col++) {
+      const freq = viewMin + (col / pw) * viewSpan;
+      let bi = ((freq - dataMin) / dataSpan * (nBins - 1)) | 0;
+      if (bi < 0) bi = 0; else if (bi > nBins - 1) bi = nBins - 1;
+      const db = (rd && bi < rn) ? rd[bi] : -120;
+      let ti = ((db - minDb) * invRange) | 0;               // normalized level -> LUT idx
+      if (ti < 0) ti = 0; else if (ti > 255) ti = 255;
+      const li = ti * 3, idx = (row * pw + col) * 4;
+      pix[idx] = WF_LUT[li]; pix[idx+1] = WF_LUT[li+1]; pix[idx+2] = WF_LUT[li+2]; pix[idx+3] = 255;
+    }
+  }
+  wfCtx.fillStyle = '#080810';
+  wfCtx.fillRect(0, 0, W, H);
+  wfCtx.putImageData(img, l, t);
+
+  // ── Freq axis (bottom) — uses the wheel-zoom window ───────────────────
+  const fMin = viewMin, fMax = viewMax, fSpan = viewSpan;
+  const fStep = nicestep(fSpan / 8);
+  wfCtx.font = '10px monospace';
+  for (let f = Math.ceil(fMin / fStep) * fStep; f <= fMax; f += fStep) {
+    const x = l + pw * (f - fMin) / fSpan;
+    if (gridOn) {
+      wfCtx.strokeStyle = 'rgba(120,150,185,0.45)'; wfCtx.lineWidth = 1;
+      wfCtx.beginPath(); wfCtx.moveTo(x, t); wfCtx.lineTo(x, H - b); wfCtx.stroke();
+    }
+    wfCtx.fillStyle = AXIS_LABEL;
+    wfCtx.fillText((f / 1e6).toFixed(fStep < 1e6 ? 3 : 0), x - 14, H - b + 12);
+  }
+
+  // ── Time axis (left) ─────────────────────────────────────────────────
+  const now = Date.now();
+  const oldestT = wfTimes.length > 1 ? wfTimes[wfTimes.length - 1] : now - 60000;
+  const spanSec = Math.max((now - oldestT) / 1000, 1);
+  const tStep   = nicestep(spanSec / 6);
+  for (let ts = 0; ts <= spanSec + tStep; ts += tStep) {
+    const frac = ts / spanSec;
+    if (frac > 1.02) break;
+    const y = t + ph * Math.min(frac, 1);
+    if (gridOn) {
+      wfCtx.strokeStyle = 'rgba(120,150,185,0.45)'; wfCtx.lineWidth = 1;
+      wfCtx.beginPath(); wfCtx.moveTo(l, y); wfCtx.lineTo(W - r, y); wfCtx.stroke();
+    }
+    wfCtx.fillStyle = AXIS_LABEL; wfCtx.font = '10px monospace';
+    const label = ts < 60 ? '-' + ts.toFixed(ts < 10 ? 1 : 0) + 's'
+                           : '-' + (ts / 60).toFixed(1) + 'm';
+    wfCtx.fillText(label, 2, y + 3);
+  }
+
+  // ── Cursor crosshair & tooltip ────────────────────────────────────────
+  if (wfMouseX >= l && wfMouseX <= W - r && wfMouseY >= t && wfMouseY <= H - b) {
+    const freqC = fMin + fSpan * (wfMouseX - l) / pw;
+    const frac  = (wfMouseY - t) / ph;
+    const rowI  = Math.floor(frac * nRows);
+    const timeC = wfTimes[Math.min(rowI, wfTimes.length - 1)];
+    const secsAgo = timeC ? (now - timeC) / 1000 : frac * spanSec;
+    const timeLabel = secsAgo < 60 ? secsAgo.toFixed(1) + 's ago'
+                                   : (secsAgo / 60).toFixed(2) + 'min ago';
+
+    wfCtx.save();
+    wfCtx.strokeStyle = 'rgba(255,255,80,0.7)';
+    wfCtx.lineWidth = 1;
+    wfCtx.setLineDash([4, 4]);
+    wfCtx.beginPath(); wfCtx.moveTo(wfMouseX, t);    wfCtx.lineTo(wfMouseX, H - b); wfCtx.stroke();
+    wfCtx.beginPath(); wfCtx.moveTo(l, wfMouseY);    wfCtx.lineTo(W - r, wfMouseY); wfCtx.stroke();
+    wfCtx.setLineDash([]);
+
+    const txt = (freqC / 1e6).toFixed(4) + ' MHz  ' + timeLabel;
+    wfCtx.font = 'bold 10px monospace';
+    const tw = wfCtx.measureText(txt).width;
+    let tx = wfMouseX + 8, ty = wfMouseY - 6;
+    if (tx + tw + 8 > W - r) tx = wfMouseX - tw - 12;
+    if (ty - 14 < t) ty = wfMouseY + 16;
+    wfCtx.fillStyle = 'rgba(0,0,0,0.75)';
+    wfCtx.fillRect(tx - 3, ty - 13, tw + 8, 17);
+    wfCtx.fillStyle = '#ff8';
+    wfCtx.fillText(txt, tx, ty);
+    wfCtx.restore();
+  }
+}
+
+function redraw() {
+  requestRedraw();
+}
+
+// Blank both canvases and drop cached traces — used when the client detaches so a stale
+// spectrum/waterfall doesn't linger while we're no longer receiving.
+function clearDisplay() {
+  lastFreqs = null; lastPower = null; maxPower = null;
+  wfData.length = 0; wfTimes.length = 0;
+  if (specCtx) { specCtx.fillStyle = '#080810'; specCtx.fillRect(0, 0, specCanvas.width, specCanvas.height); }
+  if (wfCtx)   { wfCtx.fillStyle   = '#080810'; wfCtx.fillRect(0, 0, wfCanvas.width, wfCanvas.height); }
+  const fpsEl = document.getElementById('fps'); if (fpsEl) fpsEl.textContent = '0';
+}
+
+// ── Calibration mode ────────────────────────────────────────────────────────
+let calTouchstoneText = null;
+function calCableChange() {
+  document.getElementById('cal-touchstone-row').style.display =
+    document.getElementById('cal-cable').value === 'custom' ? 'block' : 'none';
+}
+function calGainModeChange() {
+  const single = document.getElementById('cal-gain-mode').value === 'single';
+  document.getElementById('cal-coarse-lbl').style.display = single ? 'none' : 'block';
+  document.getElementById('cal-coarse').style.display     = single ? 'none' : 'block';
+}
+function calLoadTouchstone() {
+  const f = document.getElementById('cal-touchstone').files[0];
+  if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    calTouchstoneText = rd.result;
+    document.getElementById('cal-touchstone-status').textContent =
+      f.name + '  (' + rd.result.split('\n').length + ' lines)';
+  };
+  rd.readAsText(f);
+}
+function calTestAaronia() {
+  const el = document.getElementById('cal-gen-status');
+  el.textContent = 'testing…'; el.className = 'sub';
+  rest('/api/cal/test_gen', {
+    gen:  document.getElementById('cal-gen').value,
+    ip:   document.getElementById('cal-gen-ip').value,
+    port: parseInt(document.getElementById('cal-gen-port').value),
+  }).then(d => {
+    el.textContent = d.ok ? ('OK — ' + (d.info || 'reachable')) : ('FAILED: ' + (d.msg || ''));
+    el.className = 'sub ' + (d.ok ? 'mini-ok' : 'mini-bad');
+  });
+}
+function calBuildConfig() {
+  const powers = document.getElementById('cal-powers').value.split(',')
+    .map(s => parseFloat(s.trim())).filter(v => !isNaN(v));
+  const excl = document.getElementById('cal-exclude').value.split(',')
+    .map(s => s.trim()).filter(Boolean)
+    .map(s => s.split('-').map(x => parseFloat(x) * 1e6)).filter(a => a.length === 2 && !isNaN(a[0]) && !isNaN(a[1]));
+  return {
+    from_hz: parseFloat(document.getElementById('cal-from').value) * 1e6,
+    to_hz:   parseFloat(document.getElementById('cal-to').value) * 1e6,
+    step_hz: parseFloat(document.getElementById('cal-step').value) * 1e3,
+    gen:     document.getElementById('cal-gen').value,
+    gen_ip:  document.getElementById('cal-gen-ip').value,
+    gen_port: parseInt(document.getElementById('cal-gen-port').value),
+    powers_dbm: powers.length ? powers : [-40],
+    gain_mode: document.getElementById('cal-gain-mode').value,
+    ref_lna: parseInt(document.getElementById('cal-ref-lna').value),
+    ref_vga: parseInt(document.getElementById('cal-ref-vga').value),
+    coarse_step_hz: parseFloat(document.getElementById('cal-coarse').value) * 1e6,
+    cable: document.getElementById('cal-cable').value,
+    touchstone: calTouchstoneText,
+    exclude_hz: excl,
+    rate_hz: parseFloat(document.getElementById('cal-rate').value) * 1e6,
+    fft_size: parseInt(document.getElementById('cal-fft').value),
+    accum: parseInt(document.getElementById('cal-accum').value),
+    settle_ms: parseInt(document.getElementById('cal-settle').value),
+    tone_offset_hz: parseFloat(document.getElementById('cal-tone').value) * 1e3,
+    clean: document.getElementById('cal-clean').checked,
+  };
+}
+function calStart() {
+  if (!attached) { setStatus('attach the device first', false); return; }
+  const cfg = calBuildConfig();
+  if (cfg.cable === 'custom' && !calTouchstoneText) { setStatus('load a Touchstone file for the custom cable', false); return; }
+  document.getElementById('cal-log').textContent = '';
+  rest('/api/cal/start', cfg).then(d => {
+    if (d.ok) { calSetRunning(true); calLog('started (' + (d.points || '?') + ' points, ~' + (d.eta_s ? calFmtEta(d.eta_s) : '?') + ')'); }
+    else setStatus('cal start failed: ' + (d.msg || ''), false);
+  });
+}
+function calAbort() { rest('/api/cal/abort').then(() => calLog('abort requested…')); }
+function calSetRunning(on) {
+  document.getElementById('cal-start-btn').style.display = on ? 'none' : 'block';
+  document.getElementById('cal-abort-btn').style.display = on ? 'block' : 'none';
+}
+function calLog(m) {
+  const el = document.getElementById('cal-log');
+  el.textContent += m + '\n'; el.scrollTop = el.scrollHeight;
+}
+function calFmtEta(s) { s = Math.round(s); const m = Math.floor(s / 60); return m > 0 ? (m + 'm' + (s % 60) + 's') : (s + 's'); }
+socket.on('cal_progress', d => {
+  if (d.pct != null) {
+    document.getElementById('cal-progress-fill').style.width = Math.min(100, d.pct).toFixed(1) + '%';
+    document.getElementById('cal-pct').textContent = d.pct.toFixed(1) + '%';
+  }
+  if (d.freq_hz != null) document.getElementById('cal-curfreq').textContent = (d.freq_hz / 1e6).toFixed(3) + ' MHz';
+  if (d.eta_s   != null) document.getElementById('cal-eta').textContent = calFmtEta(d.eta_s);
+  if (d.msg) calLog(d.msg);
+  if (d.done) { calSetRunning(false); calLog(d.ok ? 'DONE ✓ — calibration saved & reloaded' : ('ended: ' + (d.msg || ''))); if (d.ok) fetchCalibration(); }
+});
+
+// ── Button state ──────────────────────────────────────────────────────────
+function updateButtons() {
+  const bd = document.getElementById('btn-dev');
+  const bs = document.getElementById('btn-startstop');
+  if (!attached) {
+    bd.textContent = '⬤ ATTACH'; bd.className = 'btn-detached';
+  } else {
+    bd.textContent = '○ DETACH'; bd.className = 'btn-attached';
+  }
+  if (running) {
+    bs.textContent = '◼ STOP'; bs.className = 'btn-stop';
+  } else {
+    bs.textContent = '▶ START'; bs.className = 'btn-start';
+  }
+  bs.disabled = !attached;
+}
+
+// ── Socket events ─────────────────────────────────────────────────────────
+socket.on('connect',    () => setStatus('connected', true));
+socket.on('disconnect', () => { running = false; attached = false; setStatus('disconnected', false); updateButtons(); });
+socket.on('error',      d  => setStatus('error: ' + d.msg, false));
+
+socket.on('connected', data => {
+  setStatus('detached', true);
+  if (data.state) applyState(data.state);
+  restoreUI();   // local UI prefs (max-hold, ref/range, etc.) override server defaults
+  fetchCalibration();
+});
+
+socket.on('attached', data => {
+  attached = true; updateButtons(); setStatus('ready', true);
+  if (data.rates && data.rates.length) populateRates(data.rates);
+});
+
+socket.on('detached', () => {
+  attached = false; running = false; updateButtons(); setStatus('detached', true); clearDisplay();
+});
+
+socket.on('started', d => { running = true; updateButtons(); setStatus('receiving: ' + d.mode, true); });
+socket.on('stopped', () => { running = false; updateButtons(); setStatus('ready', true); });
+
+socket.on('params_updated', d => {
+  // Never overwrite controls the user is holding — just confirm the text labels
+  if (d.lna != null) document.getElementById('lna-val').textContent = d.lna;
+  if (d.vga != null) document.getElementById('vga-val').textContent = d.vga;
+});
+
+socket.on('spectrum', data => {
+  const freqs = data.freqs;
+  // Clipping check on the RAW data: above ~+14 dBFS the front-end/ADC compresses, so
+  // the (linear) calibration is invalid — warn the user to reduce gain.
+  let rmax = -Infinity; for (let i=0;i<data.power.length;i++) if (data.power[i]>rmax) rmax=data.power[i];
+  clipping = rmax > 14;
+  // Calibration: add per-bin offset C(f,lna,vga) so everything downstream (trace,
+  // max-hold, auto-range, waterfall, peak) is in absolute dBm.
+  let power = (calOn && calData) ? calibrate(freqs, data.power, data.fft_size) : data.power;
+  lastFreqs = freqs; lastPower = power;
+
+  // Reset wheel-zoom when the frequency SPAN changes (retune / mode / scan-range change),
+  // but keep it across FFT-size changes and normal streaming (same span).
+  const rangeKey = freqs[0].toFixed(0) + ':' + freqs[freqs.length-1].toFixed(0);
+  if (rangeKey !== zoomRangeKey) { viewFMin = viewFMax = null; zoomRangeKey = rangeKey; }
+
+  // Max hold: element-wise max across frames; auto-reset on freq-axis change.
+  const axisKey = freqs.length + ':' + freqs[0].toFixed(0) + ':' + freqs[freqs.length-1].toFixed(0);
+  if (maxHoldOn) {
+    if (!maxPower || maxPower.length !== power.length || axisKey !== maxAxisKey) {
+      maxPower = Float32Array.from(power);
+    } else {
+      for (let i = 0; i < power.length; i++) if (power[i] > maxPower[i]) maxPower[i] = power[i];
+    }
+  }
+  maxAxisKey = axisKey;
+
+  fpsCount++;
+  const now = Date.now();
+  if (now - fpsLast > 1000) {
+    document.getElementById('fps').textContent = fpsCount;
+    fpsCount = 0; fpsLast = now;
+  }
+  if (data.center)
+    document.getElementById('info-freq').textContent = (data.center / 1e6).toFixed(3) + ' MHz';
+  updateTdPower(data);   // coherent time-domain power meter (FFT mode)
+
+  wfRows = parseInt(document.getElementById('wf-rows').value) || 200;
+  // Flush waterfall when center freq changes (old rows would show wrong band)
+  const newCenter = data.center || (freqs[Math.floor(freqs.length / 2)]);
+  if (wfCenter !== null && Math.abs(newCenter - wfCenter) > 1e3) {
+    wfData.length = 0; wfTimes.length = 0;
+  }
+  wfCenter = newCenter;
+  wfFreqs  = freqs;
+  wfData.unshift(new Float32Array(power));
+  wfTimes.unshift(now);
+  if (wfData.length  > wfRows) wfData.length  = wfRows;
+  if (wfTimes.length > wfRows) wfTimes.length = wfRows;
+
+  requestRedraw();
+});
+
+// ── Controls ──────────────────────────────────────────────────────────────
+function setStatus(msg, ok) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = ok ? 'ok' : 'err';
+}
+
+function applyState(s) {
+  if (s.freq) document.getElementById('freq-mhz').value = (s.freq / 1e6).toFixed(4);
+  if (s.rate) {
+    const sel = document.getElementById('rate-sel');
+    for (const o of sel.options) if (Math.abs(+o.value - s.rate) < 1) { o.selected = true; break; }
+  }
+  if (s.lna  != null) { document.getElementById('lna').value = s.lna; document.getElementById('lna-val').textContent = s.lna; }
+  if (s.vga  != null) { document.getElementById('vga').value = s.vga; document.getElementById('vga-val').textContent = s.vga; }
+  if (s.fft_size)     document.getElementById('fft-size').value = s.fft_size;
+  if (s.accum_n)      document.getElementById('accum-n').value  = s.accum_n;
+  if (s.overlap      != null) { document.getElementById('overlap').value = s.overlap; document.getElementById('overlap-val').textContent = s.overlap; }
+  if (s.scan_overlap != null) { document.getElementById('scan-overlap').value = s.scan_overlap; document.getElementById('scan-overlap-val').textContent = s.scan_overlap; }
+  if (s.scan_from)   document.getElementById('scan-from').value = +(s.scan_from / 1e6).toFixed(4);
+  if (s.scan_to)     document.getElementById('scan-to').value   = +(s.scan_to   / 1e6).toFixed(4);
+  if (s.mode) setMode(s.mode);
+}
+
+function populateRates(rates) {
+  const sel = document.getElementById('rate-sel');
+  const cur = parseFloat(sel.value);
+  sel.innerHTML = '';
+  rates.forEach(r => {
+    const o = document.createElement('option');
+    o.value = r; o.textContent = (r / 1e6).toFixed(2);
+    if (Math.abs(r - cur) < 1) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+function setMode(mode) {
+  // CFG is a settings panel, not an acquisition mode — don't change currentMode for it.
+  if (mode !== 'cfg') currentMode = mode;
+  for (const m of ['fft', 'scan', 'cal', 'cfg'])
+    document.getElementById('tab-' + m).className = 'tab' + (mode === m ? ' active' : '');
+  document.getElementById('fft-section').style.display  = mode === 'fft'  ? 'block' : 'none';
+  document.getElementById('scan-section').style.display = mode === 'scan' ? 'block' : 'none';
+  document.getElementById('cal-section').style.display  = mode === 'cal'  ? 'block' : 'none';
+  document.getElementById('cfg-section').style.display  = mode === 'cfg'  ? 'block' : 'none';
+  // Acquisition-only panels (sample rate, gain, display, info) apply to FFT/SCAN only —
+  // hide them in the CAL and CFG panels, which are self-contained.
+  const acq = (mode === 'fft' || mode === 'scan');
+  document.querySelectorAll('.acq-only').forEach(e => { e.style.display = acq ? '' : 'none'; });
+  if (mode === 'cfg') loadBackendCfg();
+}
+
+// ── Backend selection (Configure tab) ───────────────────────────────────────
+function cfgStatus(m, ok) {
+  const el = document.getElementById('cfg-status');
+  el.textContent = m; el.className = 'sub ' + (ok === false ? 'mini-bad' : (ok ? 'mini-ok' : ''));
+}
+function loadBackendCfg() {
+  fetch('/api/config/backend').then(r => r.json()).then(d => {
+    document.getElementById('cfg-running').textContent = d.running;
+    const el = document.querySelector('input[name=backend][value="' + d.selected + '"]');
+    if (el) el.checked = true;
+    cfgStatus('running: ' + d.running + ', selected: ' + d.selected);
+  }).catch(() => cfgStatus('backend info unavailable', false));
+}
+function applyBackend() {
+  const sel = document.querySelector('input[name=backend]:checked');
+  if (!sel) { cfgStatus('pick a backend', false); return; }
+  const be = sel.value;
+  cfgStatus('applying ' + be + '…');
+  rest('/api/config/backend', { backend: be }).then(d => {
+    if (!d.ok) { cfgStatus('failed: ' + (d.msg || ''), false); return; }
+    if (d.switching) {
+      cfgStatus('switching to ' + be + ' — restarting backend, page will reload…');
+      setTimeout(() => location.reload(), 3500);
+    } else {
+      cfgStatus('backend is already ' + be, true);
+    }
+  });
+}
+
+function buildScanFreqs() {
+  // Contiguous tiling (like the fft-scan example): step spacing = sample_rate x
+  // FOBOS_AUTO_BW(0.8). The backend DC-crops each step to one spacing wide, so the
+  // band is covered with no gaps and strong signals land at the correct frequency.
+  // Pick a HIGH sample rate for wide scans (e.g. 50 MHz over 70-6000) to keep the
+  // step count manageable.
+  const from = parseFloat(document.getElementById('scan-from').value) * 1e6;
+  const to   = parseFloat(document.getElementById('scan-to').value)   * 1e6;
+  const rate = parseFloat(document.getElementById('rate-sel').value)   || 5e6;
+  const ov   = (parseFloat(document.getElementById('scan-overlap').value) || 0) / 100;
+  // Step overlap pulls the seams inside each filter's FLAT passband, removing the
+  // periodic scalloping/dips at step boundaries (more overlap = flatter, more steps).
+  const spacing = rate * 0.8 * (1 - ov);
+  let n = Math.ceil((to - from) / spacing);
+  n = Math.max(2, Math.min(512, n));     // cap; raise the sample rate if you hit the cap
+  document.getElementById('scan-steps').value = n;          // reflect computed count
+  return Array.from({length: n}, (_, i) => from + spacing * (i + 0.5));
+}
+
+// ── REST control (bypasses the flooded SocketIO spectrum stream) ───────────
+// The socket carries a heavy spectrum stream; control commands sent over the
+// same socket queue up behind that backlog (huge apply/stop delay). Sending
+// them over plain HTTP uses separate connections that are never blocked.
+function rest(path, body) {
+  return fetch(path, {
+    method: 'POST',
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  }).then(r => r.json().catch(() => ({ ok: r.ok })));
+}
+
+function toggleDev() {
+  if (!attached) {
+    rest('/api/attach').then(d => {
+      if (d.ok) {
+        attached = true; updateButtons(); setStatus('ready', true);
+        if (d.rates && d.rates.length) populateRates(d.rates);
+      } else {
+        setStatus('attach failed: ' + (d.msg || ''), false);
+      }
+    });
+  } else {
+    rest('/api/detach').then(() => {
+      attached = false; running = false; updateButtons(); setStatus('detached', true); clearDisplay();
+    });
+  }
+}
+
+function buildStartPayload() {
+  return {
+    mode: currentMode,
+    freq: parseFloat(document.getElementById('freq-mhz').value) * 1e6,
+    rate: parseFloat(document.getElementById('rate-sel').value),
+    lna:  parseInt(document.getElementById('lna').value),
+    vga:  parseInt(document.getElementById('vga').value),
+    fft_size: parseInt(document.getElementById('fft-size').value),
+    overlap:  parseInt(document.getElementById('overlap').value),
+    scan_overlap: parseInt(document.getElementById('scan-overlap').value),
+    accum_n: parseInt(document.getElementById('accum-n').value),
+    scan_freqs: buildScanFreqs(),
+    scan_from: parseFloat(document.getElementById('scan-from').value) * 1e6,
+    scan_to:   parseFloat(document.getElementById('scan-to').value)   * 1e6,
+  };
+}
+
+function toggleRx() {
+  if (!running) {
+    if (currentMode === 'scan') {
+      const n = buildScanFreqs().length;          // FOBOS hardware limit is 256 scan tiles
+      if (n > 256) {
+        setStatus(`scan needs ${n} tiles (>256 max) — raise SAMPLE RATE or narrow the range`, false);
+        return;
+      }
+    }
+    setStatus('starting…', true);
+    rest('/api/start', buildStartPayload()).then(d => {
+      if (d.ok) { running = true; updateButtons(); setStatus('receiving: ' + d.mode, true); }
+      else setStatus('start failed', false);
+    });
+  } else {
+    stopRx();
+  }
+}
+
+// FFT size is applied only when the acquisition worker (re)starts — a live param
+// change never rebuilds the FFT. So changing it while running must restart the worker
+// (/api/start stops the current worker and starts a fresh one with the new size).
+function onFftChange() {
+  persistUI();
+  if (running) {
+    setStatus('applying FFT size…', true);
+    rest('/api/start', buildStartPayload()).then(d => {
+      if (d.ok) setStatus('receiving: ' + d.mode, true);
+    });
+  }
+}
+
+function stopRx() {
+  // Update UI immediately; the request returns in ~40ms anyway
+  running = false; updateButtons(); setStatus('stopping…', true);
+  rest('/api/stop?wait=true').then(d => {
+    setStatus('ready' + (d.elapsed_ms != null ? ' (' + d.elapsed_ms + 'ms)' : ''), true);
+  });
+}
+
+function onRateChange() { sendParams({ rate: parseFloat(document.getElementById('rate-sel').value) }); }
+
+function sendParams(p) {
+  rest('/api/params', p).then(d => {
+    if (d && d.lna != null) document.getElementById('lna-val').textContent = d.lna;
+    if (d && d.vga != null) document.getElementById('vga-val').textContent = d.vga;
+  });
+}
+
+function toggleMaxHold() {
+  maxHoldOn = !maxHoldOn;
+  const b = document.getElementById('btn-maxhold');
+  b.textContent = 'MAX HOLD: ' + (maxHoldOn ? 'ON' : 'OFF');
+  b.style.background = maxHoldOn ? '#3a2a0a' : '#26304a';
+  b.style.color      = maxHoldOn ? '#fc8'    : '#8cf';
+  if (!maxHoldOn) maxPower = null;     // forget trace when turning off
+  persistUI();
+  redraw();
+}
+function resetMaxHold() { maxPower = null; redraw(); }
+
+// ── Auto Range: derive ref/range from the data (drives spectrum AND waterfall) ──
+function getRefRange() {
+  if (autoRange) {
+    const t = (maxHoldOn && maxPower && maxPower.length) ? maxPower : lastPower;
+    if (t && t.length) {
+      const a = Array.from(t).filter(v => isFinite(v)).sort((x,y)=>x-y);
+      if (a.length > 4) {
+        const mx = a[a.length-1];
+        const lo = a[Math.floor(a.length*0.05)];      // 5th-percentile noise floor
+        const ref = Math.ceil(mx) + 5;
+        const range = Math.min(140, Math.max(10, Math.ceil(ref - lo) + 5));
+        const rd = document.getElementById('ref-db'), gd = document.getElementById('range-db');
+        if (rd) rd.value = ref; if (gd) gd.value = range;   // reflect in the (disabled) inputs
+        return {ref, range};
+      }
+    }
+  }
+  return {ref: parseFloat(document.getElementById('ref-db').value) || -20,
+          range: parseFloat(document.getElementById('range-db').value) || 80};
+}
+function toggleAutoRange() {
+  autoRange = !autoRange;
+  const b = document.getElementById('btn-autorange');
+  b.textContent = 'AUTO RANGE: ' + (autoRange ? 'ON' : 'OFF');
+  b.style.background = autoRange ? '#0a3020' : '#26304a';
+  b.style.color      = autoRange ? '#4e8'    : '#8cf';
+  document.getElementById('ref-db').disabled   = autoRange;
+  document.getElementById('range-db').disabled = autoRange;
+  persistUI(); redraw();
+}
+// ── Absolute-power calibration (raw dBFS -> dBm) ──────────────────────────────
+function fetchCalibration() {
+  fetch('/api/calibration').then(r => r.json()).then(d => {
+    const b = document.getElementById('btn-cal');
+    if (d.available) {
+      calData = d.cal; if (b) b.disabled = false;
+      const o = (() => { try { return JSON.parse(localStorage.getItem('fobos_ui')||'null'); } catch(e){ return null; } })();
+      if (o && o.calOn && !calOn) toggleCal();          // restore preference once cal is loaded
+    } else if (b) { b.disabled = true; b.title = 'no fobos_calibration.json'; }
+  }).catch(() => {});
+}
+function _interp(xs, ys, x) {
+  const n = xs.length; if (x <= xs[0]) return ys[0]; if (x >= xs[n-1]) return ys[n-1];
+  let lo = 0, hi = n-1; while (hi-lo > 1) { const m=(lo+hi)>>1; if (xs[m] <= x) lo=m; else hi=m; }
+  const t=(x-xs[lo])/(xs[hi]-xs[lo]); return ys[lo]+t*(ys[hi]-ys[lo]);
+}
+function calOffsetAt(f, lna, vga) {
+  const fr = calData.freq_response, gd = calData.gain_delta;
+  let li = gd.lnas.indexOf(lna); if (li < 0) li = gd.lnas.length-1;
+  let vi = gd.vgas.indexOf(vga);
+  if (vi < 0) { let bd=1e9; for (let k=0;k<gd.vgas.length;k++){const dd=Math.abs(gd.vgas[k]-vga); if(dd<bd){bd=dd;vi=k;}} }
+  return _interp(fr.freqs_hz, fr.offset_db, f) + _interp(gd.freqs_hz, gd.delta_db[li][vi], f);
+}
+function calibrate(freqs, power, actualFft) {
+  const lna = parseInt(document.getElementById('lna').value);
+  const vga = parseInt(document.getElementById('vga').value);
+  // A CW/narrowband peak's bin power scales ~10·log10(fft_size); the calibration was
+  // measured at calData.meta.fft_size, so correct for the FFT size THIS FRAME used
+  // (from the payload — the selector may already show a new value while old frames arrive).
+  const calFft = (calData.meta && calData.meta.fft_size) || 8192;
+  const curFft = actualFft || parseInt(document.getElementById('fft-size').value) || calFft;
+  const fftCorr = 10 * Math.log10(calFft / curFft);
+  const out = new Float32Array(power.length);
+  for (let i=0;i<power.length;i++) out[i] = power[i] + calOffsetAt(freqs[i], lna, vga) + fftCorr;
+  return out;
+}
+function toggleCal() {
+  if (!calData) return;
+  calOn = !calOn;
+  const b = document.getElementById('btn-cal');
+  b.textContent = 'CAL dBm: ' + (calOn ? 'ON' : 'OFF');
+  b.style.background = calOn ? '#0a3020' : '#26304a';
+  b.style.color      = calOn ? '#4e8'    : '#8cf';
+  // Ref Level is an absolute level on the trace's scale, so its unit follows the trace.
+  document.getElementById('ref-db-label').textContent =
+    'Ref Level (' + (calOn ? 'dBm' : 'dBFS') + ')';
+  maxPower = null;                 // units changed (dBFS<->dBm) -> forget the trace
+  persistUI(); redraw();
+}
+
+// ── Time-domain power meter: coherent single-bin carrier power (backend), calibrated
+// to absolute dBm/dBmV. Resolution-independent (no fft_size term), no scalloping. ──
+function updateTdPower(data) {
+  const el = document.getElementById('td-power'), ef = document.getElementById('td-freq');
+  if (data.carrier_dbfs == null || data.carrier_freq == null) { el.textContent='—'; ef.textContent='—'; return; }
+  ef.textContent = (data.carrier_freq/1e6).toFixed(4) + ' MHz';
+  const pg = calData && calData.meta ? calData.meta.pg_coherent_db : null;
+  if (pg != null) {
+    const lna = parseInt(document.getElementById('lna').value);
+    const vga = parseInt(document.getElementById('vga').value);
+    const dbm  = data.carrier_dbfs + calOffsetAt(data.carrier_freq, lna, vga) + pg;
+    const dbmv = dbm + 47.0;        // 50 Ω:  0 dBm = 46.99 dBmV
+    el.textContent = dbm.toFixed(1) + ' dBm / ' + dbmv.toFixed(1) + ' dBmV';
+  } else {
+    el.textContent = data.carrier_dbfs.toFixed(1) + ' dBFS (no cal)';
+  }
+}
+
+// ── DC reject: interpolate across the receiver DC/LO spike at band center ──
+let dcReject = true;
+function toggleDcReject() {
+  dcReject = !dcReject;
+  const b = document.getElementById('btn-dcreject');
+  b.textContent = 'DC REJECT: ' + (dcReject ? 'ON' : 'OFF');
+  b.style.background = dcReject ? '#0a3020' : '#26304a';
+  b.style.color      = dcReject ? '#4e8'    : '#8cf';
+  sendParams({dc_reject: dcReject});      // applies live (no scan restart)
+  persistUI();
+}
+function sendDcWidth() {
+  const khz = parseFloat(document.getElementById('dc-width').value) || 0;
+  sendParams({dc_reject_hz: khz * 1e3});
+  persistUI();
+}
+
+// ── Grid: show/hide grid lines on spectrum + waterfall (axis labels stay) ──
+function toggleGrid() {
+  gridOn = !gridOn;
+  const b = document.getElementById('btn-grid');
+  b.textContent = 'GRID: ' + (gridOn ? 'ON' : 'OFF');
+  b.style.background = gridOn ? '#0a3020' : '#26304a';
+  b.style.color      = gridOn ? '#4e8'    : '#8cf';
+  persistUI();
+  redraw();
+}
+
+// expose the current max-hold trace for external capture (CSV export)
+window.getMaxHold = () => ({freqs: lastFreqs || [],
+  power: (maxHoldOn && maxPower) ? Array.from(maxPower) : (lastPower ? Array.from(lastPower) : [])});
+
+// ── Persist ALL UI settings in localStorage (survives reload) ───────────────
+const PERSIST_IDS = ['freq-mhz','rate-sel','overlap','scan-from','scan-to',
+  'scan-overlap','lna','vga','fft-size','accum-n','ref-db','range-db','wf-rows','dc-width'];
+function persistUI() {
+  try {
+    const o = {};
+    PERSIST_IDS.forEach(id => { const el = document.getElementById(id); if (el) o[id] = el.value; });
+    o.maxHold = maxHoldOn; o.mode = currentMode; o.autoRange = autoRange; o.dcReject = dcReject; o.gridOn = gridOn; o.calOn = calOn;
+    localStorage.setItem('fobos_ui', JSON.stringify(o));
+  } catch (e) {}
+}
+function restoreUI() {
+  let o; try { o = JSON.parse(localStorage.getItem('fobos_ui') || 'null'); } catch (e) { return; }
+  if (!o) return;
+  PERSIST_IDS.forEach(id => { if (o[id] != null) { const el = document.getElementById(id); if (el) el.value = o[id]; } });
+  // refresh the slider value labels
+  const lbl = {lna:'lna-val', vga:'vga-val', overlap:'overlap-val', 'scan-overlap':'scan-overlap-val'};
+  for (const id in lbl) { const el = document.getElementById(id), s = document.getElementById(lbl[id]); if (el && s) s.textContent = el.value; }
+  if (o.mode) setMode(o.mode);
+  if (!!o.maxHold !== maxHoldOn) toggleMaxHold();
+  if (o.autoRange !== undefined && !!o.autoRange !== autoRange) toggleAutoRange();
+  if (o.dcReject !== undefined && !!o.dcReject !== dcReject) toggleDcReject();
+  else sendDcWidth();                 // push restored width to the server
+  if (o.gridOn !== undefined && !!o.gridOn !== gridOn) toggleGrid();
+  redraw();
+}
+// save on any control change
+['input','change'].forEach(ev => document.querySelector('aside').addEventListener(ev, persistUI));
+
+document.addEventListener('keydown', e => {
+  if (e.key === ' ') { e.preventDefault(); toggleRx(); }
+  if (e.key === 'Escape') { if (running) stopRx(); }
+  if (e.key === 'm' || e.key === 'M') toggleMaxHold();
+});
+</script>
+</body>
+</html>
